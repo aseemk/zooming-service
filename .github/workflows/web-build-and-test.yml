@@ -1,0 +1,102 @@
+name: web-build-and-test
+
+on: push
+# on:
+#   push:
+#     branches: [master]
+#   pull_request:
+#     branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PGHOST: "localhost"
+      PGPORT: "5432"
+      PGUSER: "zoomhub"
+      PGDATABASE: "zoomhub_test"
+      PGPASSWORD: "popcorn"
+
+    services:
+      postgres:
+        image: postgres:9.6.5
+        env:
+          POSTGRES_USER: zoomhub
+          POSTGRES_DB: zoomhub_test
+          POSTGRES_PASSWORD: popcorn
+        # Set health checks to wait until PostgreSQL has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps tcp port 5432 on service container to the host
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: haskell/actions/setup@v1
+        with:
+          ghc-version: "8.6.5"
+          cabal-version: "latest"
+          enable-stack: true
+          stack-version: "latest"
+
+      - name: Cache ~/.stack
+        uses: actions/cache@v1
+        env:
+          cache-name: cache-stack
+        with:
+          path: ~/.stack
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/stack.yaml.lock') }}-${{ hashFiles('**/package.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - name: Cache .stack-work
+        uses: actions/cache@v1
+        env:
+          cache-name: cache-stack-work
+        with:
+          path: .stack-work
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/stack.yaml.lock') }}-${{ hashFiles('**/package.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - name: Build
+        run: |
+          stack build --test \
+                      --no-run-tests \
+                      --no-terminal \
+                      --jobs 4 \
+                      --pedantic \
+                      --ghc-options='-O2'
+
+      - name: Run tests
+        run: |
+          echo "PGHOST: $PGHOST"
+          echo "PGPORT: $PGPORT"
+          echo "PGUSER: $PGUSER"
+          echo "PGDATABASE: $PGDATABASE"
+          echo "PGPASSWORD: $PGPASSWORD"
+
+          # HASHIDS_SALT='secret-salt' \
+          #   stack build --test \
+          #               --no-run-tests \
+          #               --no-terminal \
+          #               --jobs 4 \
+          #               --pedantic \
+          #               --ghc-options='-O2' \
+          #               --exec "migrate-database $PGDATABASE migrate"
+
+          psql $PGDATABASE < ./data/zoomhub_data.sql
+          psql $PGDATABASE < ./data/zoomhub_sequences.sql
+
+          stack build --test \
+                      --no-terminal \
+                      --pedantic \
+                      --ghc-options='-O2'
